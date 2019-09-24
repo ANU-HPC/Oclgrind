@@ -42,6 +42,21 @@ namespace oclgrind
     virtual void workItemClearBarrier(const WorkItem *workItem) override;
 
   private:
+    //Datatype to visually show thread behaviour over time
+    class Tapestry
+    {
+        public:
+        Tapestry(std::string filename, unsigned thread_count);
+        void AddStitch(unsigned thread_no, unsigned value);
+
+        private:
+        unsigned thread_count;
+        unsigned current_line;
+        std::string  filename;
+        std::vector<std::vector<unsigned>> weave;
+    };
+
+    std::unique_ptr<Tapestry> local_memory_read_tapestry;
     std::vector<size_t> m_memoryOps;
     std::unordered_map<std::string,size_t> m_computeOps;
     std::unordered_map<unsigned,std::vector<bool>> m_branchOps;
@@ -87,6 +102,6 @@ namespace oclgrind
     static THREAD_LOCAL WorkerState m_state;
 
     std::mutex m_mtx;
-
+    
   };
 }

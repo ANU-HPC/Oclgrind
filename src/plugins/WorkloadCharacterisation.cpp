@@ -42,6 +42,31 @@ using namespace std;
 THREAD_LOCAL WorkloadCharacterisation::WorkerState
     WorkloadCharacterisation::m_state = {NULL};
 
+WorkloadCharacterisation::Tapestry::Tapestry(std::string fn, unsigned tc){
+    filename = fn;
+    current_line = 0;
+    thread_count = tc;
+    weave = std::vector<std::vector<unsigned> >();
+    std::vector<unsigned> new_row(thread_count,0);
+    weave.push_back(new_row);
+    std::cout << "Constructing tapestry: " << filename << " with threadcount " << thread_count << std::endl;
+}
+
+void WorkloadCharacterisation::Tapestry::AddStitch(unsigned int thread_no, unsigned int value){
+    std::cout << "Adding stitch " << value << " at position " << thread_no << std::endl;
+    if (current_line >= weave.size()){
+        std::vector<unsigned> new_row(thread_count,0);
+        weave.push_back(new_row);
+    }
+    //if we have to overwrite a value move onto the next row
+    if (weave[current_line][thread_no] != 0){
+        current_line ++;
+        std::vector<unsigned> new_row(thread_count,0);
+        weave.push_back(new_row);
+    }
+    weave[current_line][thread_no] = value;
+}
+
 WorkloadCharacterisation::WorkloadCharacterisation(const Context *context) : WorkloadCharacterisation::Plugin(context) {
   m_numberOfHostToDeviceCopiesBeforeKernelNamed = 0;
   m_last_kernel_name = "";
@@ -115,9 +140,32 @@ void WorkloadCharacterisation::memoryLoad(const Memory *memory, const WorkItem *
   if (memory->getAddressSpace() != AddrSpacePrivate) {
     m_state.memoryOps->push_back(address);
   }
+  switch(memory->getAddressSpace()){
+      //case AddrSpacePrivate : std::cout << "_private.csv";
+      //case AddrSpaceGlobal :  std::cout << "_global.csv";
+      //case AddrSpaceConstant :std::cout << "_constant.csv";
+      case AddrSpaceLocal:    local_memory_read_tapestry->AddStitch(workItem->getGlobalIndex(),address);
+  }
 }
 
+/*
+void WorkloadCharacterisation::WriteToTapestry(std::string type, const Memory* memory, const WorkItem* workItem, size_t address){
+    std::string tapestry_name = type;
+    switch(memory->getAddressSpace()){
+        case AddrSpacePrivate : tapestry_name.append("_private.csv");
+        case AddrSpaceGlobal :  tapestry_name.append("_global.csv");
+        case AddrSpaceConstant :tapestry_name.append("_constant.csv");
+        case AddrSpaceLocal:    tapestry_name.append("_local.csv");
+    }
+    Tapestry(tapestry_name);
+    //TODO: tapestry datastructure that's dumped when the kernel finishes made of row*n_threads
+    //perhaps a std::map<int instruction_no, int[]>; and written to int[workgroup_id] = address
+    std::cout << "memory access in shared space to address: " << address << " from thread: " << workItem->getGlobalIndex() << std::endl;
+}
+*/
+
 void WorkloadCharacterisation::memoryStore(const Memory *memory, const WorkItem *workItem, size_t address, size_t size, const uint8_t *storeData) {
+  
   if (memory->getAddressSpace() != AddrSpacePrivate) {
     m_state.memoryOps->push_back(address);
   }
@@ -283,6 +331,13 @@ void WorkloadCharacterisation::kernelBegin(const KernelInvocation *kernelInvocat
   m_global_memory_access = 0;
   m_local_memory_access = 0;
   m_constant_memory_access = 0;
+
+  std::string name = std::string(m_last_kernel_name);//std::string(m_last_kernel_name).append("_local_read_tapestry_",workGroup->getGroupIndex());
+  unsigned int thread_count = kernelInvocation->getGlobalSize().x * kernelInvocation->getGlobalSize().y * kernelInvocation->getGlobalSize().z; //workGroup->getGroupSize().x * workGroup->getGroupSize().y * workGroup->getGroupSize().z;
+  local_memory_read_tapestry.reset(new Tapestry(name, thread_count));
+  //TODO: move this to a more suitable location once figuring out how to mutex -- maybe the tapestry should only be 1 per workgroup max.
+  //TODO: then fix segfault in AddStitch
+
 }
 
 void WorkloadCharacterisation::kernelEnd(const KernelInvocation *kernelInvocation) {
@@ -494,10 +549,11 @@ void WorkloadCharacterisation::kernelEnd(const KernelInvocation *kernelInvocatio
   cout << "Local Memory Address Entropy -- measure of the spatial locality of memory addresses" << endl
        << endl;
 
+  cout << "|------------|--------|" << endl;
   cout << "|" << setw(12) << right << "LSBs skipped"
        << "|" << setw(8) << right << "Entropy"
        << "|" << endl;
-  cout << "|-----------:|-------:|" << endl;
+  cout << "|------------|--------|" << endl;
   std::vector<float> loc_entropy;
   for (int nskip = 1; nskip < 11; nskip++) {
     double local_entropy = 0.0;
@@ -743,6 +799,7 @@ void WorkloadCharacterisation::workGroupBegin(const WorkGroup *workGroup) {
   m_state.target1 = "";
   m_state.target2 = "";
   m_state.branch_loc = 0;
+
 }
 
 void WorkloadCharacterisation::workGroupComplete(const WorkGroup *workGroup) {
